@@ -71,7 +71,7 @@ if [ ! -f sbyg_update ]; then
 green "首次安装Sing-box-yg脚本必要的依赖……"
 if [[ x"${release}" == x"alpine" ]]; then
 apk update
-apk add wget curl tar jq tzdata openssl expect git socat iproute2 iptables
+apk add wget curl tar jq tzdata openssl expect git socat iproute2 iptables grep coreutils util-linux dcron
 apk add virt-what
 apk add qrencode
 else
@@ -85,13 +85,13 @@ cd
 fi
 if [ -x "$(command -v apt-get)" ]; then
 apt update -y
-apt install jq cron socat iptables-persistent -y
+apt install jq cron socat iptables-persistent coreutils util-linux -y
 elif [ -x "$(command -v yum)" ]; then
 yum update -y && yum install epel-release -y
-yum install jq socat -y
+yum install jq socat coreutils util-linux -y
 elif [ -x "$(command -v dnf)" ]; then
 dnf update -y
-dnf install jq socat -y
+dnf install jq socat coreutils util-linux -y
 fi
 if [ -x "$(command -v yum)" ] || [ -x "$(command -v dnf)" ]; then
 if [ -x "$(command -v yum)" ]; then
@@ -598,7 +598,7 @@ cat > /etc/s-box/sb10.json <<EOF
 },
 {
 "outbound":"warp-IPv4-out",
-"domain": [
+"domain_suffix": [
 "yg_kkk"
 ]
 ,"geosite": [
@@ -607,7 +607,7 @@ cat > /etc/s-box/sb10.json <<EOF
 },
 {
 "outbound":"warp-IPv6-out",
-"domain": [
+"domain_suffix": [
 "yg_kkk"
 ]
 ,"geosite": [
@@ -616,7 +616,7 @@ cat > /etc/s-box/sb10.json <<EOF
 },
 {
 "outbound":"socks-IPv4-out",
-"domain": [
+"domain_suffix": [
 "yg_kkk"
 ]
 ,"geosite": [
@@ -625,7 +625,7 @@ cat > /etc/s-box/sb10.json <<EOF
 },
 {
 "outbound":"socks-IPv6-out",
-"domain": [
+"domain_suffix": [
 "yg_kkk"
 ]
 ,"geosite": [
@@ -634,7 +634,7 @@ cat > /etc/s-box/sb10.json <<EOF
 },
 {
 "outbound":"vps-outbound-v4",
-"domain": [
+"domain_suffix": [
 "yg_kkk"
 ]
 ,"geosite": [
@@ -643,7 +643,7 @@ cat > /etc/s-box/sb10.json <<EOF
 },
 {
 "outbound":"vps-outbound-v6",
-"domain": [
+"domain_suffix": [
 "yg_kkk"
 ]
 ,"geosite": [
@@ -820,39 +820,39 @@ cat > /etc/s-box/sb11.json <<EOF
 },
 {
 "action": "resolve",
-"domain":[
+"domain_suffix":[
 "yg_kkk"
 ],
 "strategy": "prefer_ipv4"
 },
 {
 "action": "resolve",
-"domain":[
+"domain_suffix":[
 "yg_kkk"
 ],
 "strategy": "prefer_ipv6"
 },
 {
-"domain":[
+"domain_suffix":[
 "yg_kkk"
 ],
 "outbound":"socks-out"
 },
 {
-"domain":[
+"domain_suffix":[
 "yg_kkk"
 ],
 "outbound":"warp-out"
 },
 {
 "outbound":"vps-outbound-v4",
-"domain":[
+"domain_suffix":[
 "yg_kkk"
 ]
 },
 {
 "outbound":"vps-outbound-v6",
-"domain":[
+"domain_suffix":[
 "yg_kkk"
 ]
 },
@@ -905,16 +905,56 @@ fi
 }
 
 ipuuid(){
-uuid=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[0].users[0].uuid')
+if [[ x"${release}" == x"alpine" ]]; then
+status_cmd="rc-service sing-box status"
+status_pattern="started"
+else
+status_cmd="systemctl status sing-box"
+status_pattern="active"
+fi
+if [[ -n $($status_cmd 2>/dev/null | grep -w "$status_pattern") && -f '/etc/s-box/sb.json' ]]; then
+v4v6
+if [[ -n $v4 && -n $v6 ]]; then
+green "双栈VPS需要选择IP配置输出，一般情况下nat vps建议选择IPV6"
+yellow "1：使用IPV4配置输出 (回车默认) "
+yellow "2：使用IPV6配置输出"
+readp "请选择【1-2】：" menu
+if [ -z "$menu" ] || [ "$menu" = "1" ]; then
+sbdnsip='tls://8.8.8.8/dns-query'
+echo "$sbdnsip" > /etc/s-box/sbdnsip.log
+server_ip="$v4"
+echo "$server_ip" > /etc/s-box/server_ip.log
+server_ipcl="$v4"
+echo "$server_ipcl" > /etc/s-box/server_ipcl.log
+else
+sbdnsip='tls://[2001:4860:4860::8888]/dns-query'
+echo "$sbdnsip" > /etc/s-box/sbdnsip.log
+server_ip="[$v6]"
+echo "$server_ip" > /etc/s-box/server_ip.log
+server_ipcl="$v6"
+echo "$server_ipcl" > /etc/s-box/server_ipcl.log
+fi
+else
+yellow "VPS并不是双栈VPS，不支持IP配置输出的切换"
 serip=$(curl -s4m5 icanhazip.com -k || curl -s6m5 icanhazip.com -k)
 if [[ "$serip" =~ : ]]; then
 sbdnsip='tls://[2001:4860:4860::8888]/dns-query'
+echo "$sbdnsip" > /etc/s-box/sbdnsip.log
 server_ip="[$serip]"
+echo "$server_ip" > /etc/s-box/server_ip.log
 server_ipcl="$serip"
+echo "$server_ipcl" > /etc/s-box/server_ipcl.log
 else
 sbdnsip='tls://8.8.8.8/dns-query'
+echo "$sbdnsip" > /etc/s-box/sbdnsip.log
 server_ip="$serip"
+echo "$server_ip" > /etc/s-box/server_ip.log
 server_ipcl="$serip"
+echo "$server_ipcl" > /etc/s-box/server_ipcl.log
+fi
+fi
+else
+red "Sing-box服务未运行" && exit
 fi
 }
 
@@ -939,7 +979,10 @@ ym=`bash ~/.acme.sh/acme.sh --list | tail -1 | awk '{print $1}'`
 echo $ym > /root/ygkkkca/ca.log
 fi
 rm -rf /etc/s-box/vm_ws_argo.txt /etc/s-box/vm_ws.txt /etc/s-box/vm_ws_tls.txt
-wgcfgo
+sbdnsip=$(cat /etc/s-box/sbdnsip.log)
+server_ip=$(cat /etc/s-box/server_ip.log)
+server_ipcl=$(cat /etc/s-box/server_ipcl.log)
+uuid=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[0].users[0].uuid')
 vl_port=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[0].listen_port')
 vl_name=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[0].tls.server_name')
 public_key=$(cat /etc/s-box/public.key)
@@ -989,7 +1032,7 @@ if [[ -n $hy2_ports ]]; then
 hy2ports=$(echo $hy2_ports | sed 's/:/-/g')
 hyps=$hy2_port,$hy2ports
 else
-hyps=$hy2_port
+hyps=
 fi
 ym=$(cat /root/ygkkkca/ca.log 2>/dev/null)
 hy2_sniname=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[2].tls.key_path')
@@ -1097,14 +1140,15 @@ echo
 reshy2(){
 echo
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-hy2_link="hysteria2://$uuid@$sb_hy2_ip:$hy2_port?&alpn=h3&insecure=$ins_hy2&mport=$hyps&sni=$hy2_name#hy2-$hostname"
+#hy2_link="hysteria2://$uuid@$sb_hy2_ip:$hy2_port?security=tls&alpn=h3&insecure=$ins_hy2&mport=$hyps&sni=$hy2_name#hy2-$hostname"
+hy2_link="hysteria2://$uuid@$sb_hy2_ip:$hy2_port?security=tls&alpn=h3&insecure=$ins_hy2&sni=$hy2_name#hy2-$hostname"
 echo "$hy2_link" > /etc/s-box/hy2.txt
 red "🚀【 Hysteria-2 】节点信息如下：" && sleep 2
 echo
-echo "分享链接【v2rayn、nekobox、小火箭shadowrocket】"
+echo "分享链接【v2rayn、v2rayng、nekobox、小火箭shadowrocket】"
 echo -e "${yellow}$hy2_link${plain}"
 echo
-echo "二维码【v2rayn、nekobox、小火箭shadowrocket】"
+echo "二维码【v2rayn、v2rayng、nekobox、小火箭shadowrocket】"
 qrencode -o - -t ANSIUTF8 "$(cat /etc/s-box/hy2.txt)"
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 echo
@@ -1544,7 +1588,7 @@ log-level: info
 unified-delay: true
 global-client-fingerprint: chrome
 dns:
-  enable: true
+  enable: false
   listen: :53
   ipv6: true
   enhanced-mode: fake-ip
@@ -2095,7 +2139,7 @@ log-level: info
 unified-delay: true
 global-client-fingerprint: chrome
 dns:
-  enable: true
+  enable: false
   listen: :53
   ipv6: true
   enhanced-mode: fake-ip
@@ -2614,7 +2658,7 @@ log-level: info
 unified-delay: true
 global-client-fingerprint: chrome
 dns:
-  enable: true
+  enable: false
   listen: :53
   ipv6: true
   enhanced-mode: fake-ip
@@ -3073,7 +3117,7 @@ log-level: info
 unified-delay: true
 global-client-fingerprint: chrome
 dns:
-  enable: true
+  enable: false
   listen: :53
   ipv6: true
   enhanced-mode: fake-ip
@@ -3325,7 +3369,7 @@ yellow "第$i次刷新验证Cloudflared Argo临时隧道域名有效性，请稍
 if [[ -n $(ps -e | grep cloudflared) ]]; then
 kill -15 $(cat /etc/s-box/sbargopid.log 2>/dev/null) >/dev/null 2>&1
 fi
-/etc/s-box/cloudflared tunnel --url http://localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port') --edge-ip-version auto --no-autoupdate --protocol http2 > /etc/s-box/argo.log 2>&1 &
+nohup setsid /etc/s-box/cloudflared tunnel --url http://localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port') --edge-ip-version auto --no-autoupdate --protocol http2 > /etc/s-box/argo.log 2>&1 &
 echo "$!" > /etc/s-box/sbargopid.log
 sleep 20
 if [[ -n $(curl -sL https://$(cat /etc/s-box/argo.log 2>/dev/null | grep -a trycloudflare.com | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')/ -I | awk 'NR==1 && /404|400|503/') ]]; then
@@ -3340,7 +3384,7 @@ fi
 done
 crontab -l > /tmp/crontab.tmp
 sed -i '/sbargopid/d' /tmp/crontab.tmp
-echo '@reboot /bin/bash -c "/etc/s-box/cloudflared tunnel --url http://localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port') --edge-ip-version auto --no-autoupdate --protocol http2 > /etc/s-box/argo.log 2>&1 & pid=\$! && echo \$pid > /etc/s-box/sbargopid.log"' >> /tmp/crontab.tmp
+echo '@reboot /bin/bash -c "nohup setsid /etc/s-box/cloudflared tunnel --url http://localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port') --edge-ip-version auto --no-autoupdate --protocol http2 > /etc/s-box/argo.log 2>&1 & pid=\$! && echo \$pid > /etc/s-box/sbargopid.log"' >> /tmp/crontab.tmp
 crontab /tmp/crontab.tmp
 rm /tmp/crontab.tmp
 elif [ "$menu" = "2" ]; then
@@ -3384,9 +3428,10 @@ sbservice
 sbactive
 #curl -sL https://gitlab.com/rwkgyg/sing-box-yg/-/raw/main/version/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
 curl -sL https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
-clear
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-lnsb && blue "Sing-box-yg脚本安装成功，脚本快捷方式：sb" && cronsb && sleep 1
+lnsb && blue "Sing-box-yg脚本安装成功，脚本快捷方式：sb" && cronsb
+echo
+wgcfgo
 sbshare
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 blue "Hysteria2/Tuic5自定义V2rayN配置、Clash-Meta/Sing-box客户端配置及私有订阅链接，请选择9查看"
@@ -4195,7 +4240,7 @@ vps_ipv4="当前IP：$v4"
 vps_ipv6='无本地IPV6，黑名单模式'
 fi
 unset swg4 swd4 swd6 swg6 ssd4 ssg4 ssd6 ssg6 sad4 sag4 sad6 sag6
-wd4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[1].domain | join(" ")')
+wd4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[1].domain_suffix | join(" ")')
 wg4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[1].geosite | join(" ")' 2>/dev/null)
 if [[ "$wd4" == "yg_kkk" && ("$wg4" == "yg_kkk" || -z "$wg4") ]]; then
 wfl4="${yellow}【warp出站IPV4可用】未分流${plain}"
@@ -4209,7 +4254,7 @@ fi
 wfl4="${yellow}【warp出站IPV4可用】已分流：$swd4$swg4${plain} "
 fi
 
-wd6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[2].domain | join(" ")')
+wd6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[2].domain_suffix | join(" ")')
 wg6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[2].geosite | join(" ")' 2>/dev/null)
 if [[ "$wd6" == "yg_kkk" && ("$wg6" == "yg_kkk"|| -z "$wg6") ]]; then
 wfl6="${yellow}【warp出站IPV6自测】未分流${plain}"
@@ -4223,7 +4268,7 @@ fi
 wfl6="${yellow}【warp出站IPV6自测】已分流：$swd6$swg6${plain} "
 fi
 
-sd4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[3].domain | join(" ")')
+sd4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[3].domain_suffix | join(" ")')
 sg4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[3].geosite | join(" ")' 2>/dev/null)
 if [[ "$sd4" == "yg_kkk" && ("$sg4" == "yg_kkk" || -z "$sg4") ]]; then
 sfl4="${yellow}【$warp_s4_ip】未分流${plain}"
@@ -4237,7 +4282,7 @@ fi
 sfl4="${yellow}【$warp_s4_ip】已分流：$ssd4$ssg4${plain} "
 fi
 
-sd6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[4].domain | join(" ")')
+sd6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[4].domain_suffix | join(" ")')
 sg6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[4].geosite | join(" ")' 2>/dev/null)
 if [[ "$sd6" == "yg_kkk" && ("$sg6" == "yg_kkk" || -z "$sg6") ]]; then
 sfl6="${yellow}【$warp_s6_ip】未分流${plain}"
@@ -4251,7 +4296,7 @@ fi
 sfl6="${yellow}【$warp_s6_ip】已分流：$ssd6$ssg6${plain} "
 fi
 
-ad4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[5].domain | join(" ")')
+ad4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[5].domain_suffix | join(" ")')
 ag4=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[5].geosite | join(" ")' 2>/dev/null)
 if [[ "$ad4" == "yg_kkk" && ("$ag4" == "yg_kkk" || -z "$ag4") ]]; then
 adfl4="${yellow}【$vps_ipv4】未分流${plain}" 
@@ -4265,7 +4310,7 @@ fi
 adfl4="${yellow}【$vps_ipv4】已分流：$sad4$sag4${plain} "
 fi
 
-ad6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[6].domain | join(" ")')
+ad6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[6].domain_suffix | join(" ")')
 ag6=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.route.rules[6].geosite | join(" ")' 2>/dev/null)
 if [[ "$ad6" == "yg_kkk" && ("$ag6" == "yg_kkk" || -z "$ag6") ]]; then
 adfl6="${yellow}【$vps_ipv6】未分流${plain}" 
@@ -4782,7 +4827,8 @@ acme(){
 bash <(curl -Ls https://gitlab.com/rwkgyg/acme-script/raw/main/acme.sh)
 }
 cfwarp(){
-bash <(curl -Ls https://gitlab.com/rwkgyg/CFwarp/raw/main/CFwarp.sh)
+#bash <(curl -Ls https://gitlab.com/rwkgyg/CFwarp/raw/main/CFwarp.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/warp-yg/main/CFwarp.sh)
 }
 bbr(){
 if [[ $vi =~ lxc|openvz ]]; then
@@ -4909,10 +4955,12 @@ if [[ -n $(ps -e | grep sbwpph) ]]; then
 kill -15 $(cat /etc/s-box/sbwpphid.log 2>/dev/null) >/dev/null 2>&1
 fi
 v4v6
-if [[ -z $v4 ]]; then
+if [[ -n $v4 ]]; then
+sw46=4
+else
 red "IPV4不存在，确保安装过WARP-IPV4模式"
-fi 
-[[ -n $v6 ]] && sw46=6 || sw46=4
+sw46=6
+fi
 echo
 readp "设置WARP-plus-Socks5端口（回车跳过端口默认40000）：" port
 if [[ -z $port ]]; then
@@ -5025,6 +5073,18 @@ sb
 fi
 }
 
+sbsm(){
+echo
+green "关注甬哥YouTube频道：https://www.youtube.com/@ygkkk 了解最新代理协议与翻墙动态"
+echo
+blue "sing-box-yg脚本视频教程：https://www.youtube.com/playlist?list=PLMgly2AulGG_Affv6skQXWnVqw7XWiPwJ"
+echo
+blue "sing-box-yg脚本博客说明：http://ygkkk.blogspot.com/2023/10/sing-box-yg.html"
+echo
+blue "sing-box-yg脚本项目地址：https://github.com/yonggekkk/x-ui-yg"
+echo
+}
+
 clear
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
 echo -e "${bblue} ░██     ░██      ░██ ██ ██         ░█${plain}█   ░██     ░██   ░██     ░█${red}█   ░██${plain}  "
@@ -5057,6 +5117,10 @@ green "11. 一键原版BBR+FQ加速"
 green "12. 管理 Acme 申请域名证书"
 green "13. 管理 Warp 查看Netflix/ChatGPT解锁情况"
 green "14. 添加 WARP-plus-Socks5 代理模式 【本地Warp/多地区Psiphon-VPN】"
+green "15. 双栈VPS切换IPV4/IPV6配置输出"
+white "----------------------------------------------------------------------------------"
+green "16. Sing-box-yg脚本使用说明书"
+white "----------------------------------------------------------------------------------"
 green " 0. 退出脚本"
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 insV=$(cat /etc/s-box/v 2>/dev/null)
@@ -5164,7 +5228,7 @@ showprotocol
 fi
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 echo
-readp "请输入数字【0-14】:" Input
+readp "请输入数字【0-16】:" Input
 case "$Input" in  
  1 ) instsllsingbox;;
  2 ) unins;;
@@ -5180,5 +5244,7 @@ case "$Input" in
 12 ) acme;;
 13 ) cfwarp;;
 14 ) inssbwpph;;
+15 ) wgcfgo && sbshare;;
+16 ) sbsm;;
  * ) exit 
 esac
